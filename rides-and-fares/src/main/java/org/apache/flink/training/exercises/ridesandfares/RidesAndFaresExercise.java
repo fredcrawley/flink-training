@@ -19,6 +19,9 @@
 package org.apache.flink.training.exercises.ridesandfares;
 
 import org.apache.flink.api.common.JobExecutionResult;
+import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -31,8 +34,10 @@ import org.apache.flink.training.exercises.common.datatypes.TaxiFare;
 import org.apache.flink.training.exercises.common.datatypes.TaxiRide;
 import org.apache.flink.training.exercises.common.sources.TaxiFareGenerator;
 import org.apache.flink.training.exercises.common.sources.TaxiRideGenerator;
-import org.apache.flink.training.exercises.common.utils.MissingSolutionException;
 import org.apache.flink.util.Collector;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * The Stateful Enrichment exercise from the Flink training.
@@ -45,7 +50,9 @@ public class RidesAndFaresExercise {
     private final SourceFunction<TaxiFare> fareSource;
     private final SinkFunction<RideAndFare> sink;
 
-    /** Creates a job using the sources and sink provided. */
+    /**
+     * Creates a job using the sources and sink provided.
+     */
     public RidesAndFaresExercise(
             SourceFunction<TaxiRide> rideSource,
             SourceFunction<TaxiFare> fareSource,
@@ -59,8 +66,8 @@ public class RidesAndFaresExercise {
     /**
      * Creates and executes the pipeline using the StreamExecutionEnvironment provided.
      *
-     * @throws Exception which occurs during job execution.
      * @return {JobExecutionResult}
+     * @throws Exception which occurs during job execution.
      */
     public JobExecutionResult execute() throws Exception {
 
@@ -99,19 +106,78 @@ public class RidesAndFaresExercise {
     public static class EnrichmentFunction
             extends RichCoFlatMapFunction<TaxiRide, TaxiFare, RideAndFare> {
 
+        public Map<Long, TaxiRide> rideIdList;
+
+        public Map<Long, TaxiFare> fareIdList;
+
+
+        public ValueState<TaxiRide> rideState;
+
+        public ValueState<TaxiFare> fareState;
+
         @Override
         public void open(Configuration config) throws Exception {
-            throw new MissingSolutionException();
+//            throw new MissingSolutionException();
+//            rideIdList = new HashMap<Long, TaxiRide>();
+//            fareIdList = new HashMap<Long, TaxiFare>();
+
+
+
+            // 官方解法
+            rideState = getRuntimeContext().getState(new ValueStateDescriptor<TaxiRide>("ride", TaxiRide.class));
+
+            fareState = getRuntimeContext().getState(new ValueStateDescriptor<TaxiFare>("ride", TaxiFare.class));
+
         }
 
         @Override
         public void flatMap1(TaxiRide ride, Collector<RideAndFare> out) throws Exception {
-            throw new MissingSolutionException();
+//            long rideId = ride.rideId;
+//            if (fareIdList.containsKey(rideId)) {
+//                out.collect(new RideAndFare(ride, fareIdList.get(rideId)));
+//                fareIdList.remove(rideId);
+//            } else {
+//                rideIdList.put(rideId, ride);
+//            }
+
+//            throw new MissingSolutionException();
+
+            TaxiFare fare = fareState.value();
+
+            if (null != fare) {
+                out.collect(new RideAndFare(ride, fare));
+                fareState.clear();
+            } else {
+                rideState.update(ride);
+            }
+
+
         }
 
         @Override
         public void flatMap2(TaxiFare fare, Collector<RideAndFare> out) throws Exception {
-            throw new MissingSolutionException();
+
+//            long rideId = fare.rideId;
+//            if (rideIdList.containsKey(rideId)) {
+//                out.collect(new RideAndFare(rideIdList.get(rideId), fare));
+//                fareIdList.remove(rideId);
+//            } else {
+//                fareIdList.put(rideId, fare);
+//            }
+
+
+
+            TaxiRide ride = rideState.value();
+
+            if (null != ride) {
+                out.collect(new RideAndFare(ride, fare));
+                rideState.clear();
+            } else {
+                fareState.update(fare);
+            }
+
+
+//            throw new MissingSolutionException();
         }
     }
 }
