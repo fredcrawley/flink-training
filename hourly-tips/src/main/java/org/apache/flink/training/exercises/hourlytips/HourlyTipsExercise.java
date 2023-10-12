@@ -20,22 +20,27 @@ package org.apache.flink.training.exercises.hourlytips;
 
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.training.exercises.common.datatypes.TaxiFare;
 import org.apache.flink.training.exercises.common.sources.TaxiFareGenerator;
 import org.apache.flink.training.exercises.common.utils.MissingSolutionException;
+import org.apache.flink.util.Collector;
 
 /**
  * The Hourly Tips exercise from the Flink training.
@@ -98,7 +103,7 @@ public class HourlyTipsExercise {
         // hourlyMax.addSink(sink);
 
 
-        fares.assignTimestampsAndWatermarks(WatermarkStrategy.<TaxiFare>forMonotonousTimestamps().withTimestampAssigner((fare, t) -> fare.getEventTimeMillis()))
+        SingleOutputStreamOperator<Tuple3<Long, Long, Float>> result = fares.assignTimestampsAndWatermarks(WatermarkStrategy.<TaxiFare>forMonotonousTimestamps().withTimestampAssigner((fare, t) -> fare.getEventTimeMillis()))
 
 //                .map(new MapFunction<TaxiFare, Tuple2<Long,Float>>() {
 //            @Override
@@ -106,12 +111,47 @@ public class HourlyTipsExercise {
 //                return new Tuple2<Long, Float>.(value.driverId, value.tip + value.totalFare);
 //            }
 //        });
-                .map(t -> new Tuple2<Long, Float>(t.driverId, t.tip + t.totalFare))
-                .keyBy(t -> t.f0)
+//                .map(t -> new Tuple2<Long, Float>(t.driverId, t.tip + t.totalFare))
+                .keyBy(t -> t.driverId)
                 .window(TumblingEventTimeWindows.of(Time.hours(1)))
-                .reduce((v1, v2) -> new Tuple2<>(v1.f0, v1.f1 + v2.f1));
+//                .reduce((v1, v2) -> new Tuple2<>(v1.f0, v1.f1 + v2.f1));
+//                .reduce((v1, v2) -> Tuple2.of(v1.driverId, v1.totalFare + v1.tip + v2.totalFare + v2.tip));
+                .aggregate(new AggregateFunction<TaxiFare, Tuple2<Long, Float>, Tuple2<Long, Float>>() {
+
+                    Tuple2<Long, Float> acc = new Tuple2<Long, Float>(0L, 0F);
+
+                    @Override
+                    public Tuple2<Long, Float> createAccumulator() {
+                        return acc;
+                    }
+
+                    @Override
+                    public Tuple2<Long, Float> add(TaxiFare value, Tuple2<Long, Float> accumulator) {
+                        return Tuple2.of(accumulator.f0, accumulator.f1 + value.tip);
+                    }
+
+                    @Override
+                    public Tuple2<Long, Float> getResult(Tuple2<Long, Float> accumulator) {
+                        return accumulator;
+                    }
+
+                    @Override
+                    public Tuple2<Long, Float> merge(Tuple2<Long, Float> a, Tuple2<Long, Float> b) {
+
+                        return Tuple2.of(a.f0, a.f1 + b.f1);
+                    }
+                }, new ProcessWindowFunction<Tuple2<Long, Float>, Tuple3<Long, Long, Float>, Long, TimeWindow>() {
+                    @Override
+                    public void process(Long key, ProcessWindowFunction<Tuple2<Long, Float>, Tuple3<Long, Long, Float>, Long, TimeWindow>.Context context, Iterable<Tuple2<Long, Float>> elements, Collector<Tuple3<Long, Long, Float>> out) throws Exception {
+                        Tuple2<Long, Float> next = elements.iterator().next();
+                        out.collect(Tuple3.of(context.window().getEnd(), key, next.f1));
+                    }
+                });
+
+        SingleOutputStreamOperator<Tuple3<Long, Long, Float>> result2 = result.windowAll(TumblingEventTimeWindows.of(Time.hours(1))).maxBy(2);
 
 
+        result2.addSink(new PrintSinkFunction<>());
 
 
 //                .map( t -> new Tuple2<Long, Float>(t.driverId, t.tip + t.totalFare ))
